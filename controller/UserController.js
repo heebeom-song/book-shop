@@ -22,7 +22,10 @@ const join = (req, res)=>{
                 return res.status(StatusCodes.BAD_REQUEST).end();
             }
 
-            res.status(StatusCodes.CREATED).json(results);
+            if(results.affectedRows)
+                return res.status(StatusCodes.CREATED).json(results);
+            else
+                return res.status(StatusCodes.BAD_REQUEST).end();
         }
     )
 };
@@ -45,9 +48,10 @@ const login = (req, res)=>{
 
             if(loginUser && loginUser.password == hashPassword){
                 const token = jwt.sign({
-                    email : loginUser.email
+                    email : loginUser.email,
+                    id : loginUser.id
                 }, process.env.PRIVATE_KEY, {
-                    expiresIn : '5m',
+                    expiresIn : '30m',
                     issuer : "heebeom"
                 });
 

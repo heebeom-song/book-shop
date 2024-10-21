@@ -1,9 +1,10 @@
+const ensureAuthorization = require('../auth');
 const mariadb = require('mysql2/promise');
-const { Result } = require('express-validator');
-//const conn = require('../mariadb');
 const {StatusCodes} = require('http-status-codes');
+const jwt = require("jsonwebtoken");
 
 const order = async (req, res)=>{
+
     const conn = await mariadb.createConnection({
         host : 'localhost',
         user : 'root',
@@ -12,41 +13,53 @@ const order = async (req, res)=>{
         dateStrings : true
     });
 
-    const {items, delivery, totalQuantity, totalPrice, userId, firstBookTitle} = req.body;
+    let authorization = ensureAuthorization(req);
 
-    //delivery 테이블 삽입
-    let sql = `INSERT INTO delivery (address, receiver, contact) VALUES (?, ?, ?);`;
-    let values = [delivery.address, delivery.receiver, delivery.contact]
-    
-    let [results] = await conn.execute(sql, values);
+    if(authorization instanceof jwt.TokenExpiredError){
+        return res.status(StatusCodes.UNAUTHORIZED).json({
+            "message" : "로그인 세션 만료! 재로그인 요망!"
+        })
+    }else if(authorization instanceof jwt.JsonWebTokenError){
+        return res.status(StatusCodes.BAD_REQUEST).json({
+            "message" : "잘못된 토큰입니다."
+        })
+    }else{
+        const {items, delivery, totalQuantity, totalPrice, firstBookTitle} = req.body;
 
-    let delivery_id = results.insertId;
+        //delivery 테이블 삽입
+        let sql = `INSERT INTO delivery (address, receiver, contact) VALUES (?, ?, ?);`;
+        let values = [delivery.address, delivery.receiver, delivery.contact]
+        
+        let [results] = await conn.execute(sql, values);
 
-    //orders 테이블 삽입
-    sql = `INSERT INTO orders (book_title, total_quantity, total_price, user_id, delivery_id) 
-            VALUES (?, ?, ?, ?, ?);`;
-    values = [firstBookTitle, totalQuantity, totalPrice, userId, delivery_id];
+        let delivery_id = results.insertId;
 
-    [results] = await conn.execute(sql, values);
+        //orders 테이블 삽입
+        sql = `INSERT INTO orders (book_title, total_quantity, total_price, user_id, delivery_id) 
+                VALUES (?, ?, ?, ?, ?);`;
+        values = [firstBookTitle, totalQuantity, totalPrice, authorization.id, delivery_id];
 
-    let orderId = results.insertId;
+        [results] = await conn.execute(sql, values);
 
-    sql = `SELECT book_id, quantity FROM cartsItems WHERE id IN (?)`
-    let [orderItems, fields] = await conn.query(sql, [items]);
+        let orderId = results.insertId;
 
-    //orderedBook 테이블 삽입
-    sql = `INSERT INTO orderedBook (order_id, book_id, quantity) VALUES ?;`;
+        sql = `SELECT book_id, quantity FROM cartsItems WHERE id IN (?)`
+        let [orderItems, fields] = await conn.query(sql, [items]);
 
-    values = [];
-    orderItems.forEach((item) => {
-        values.push([orderId, item.book_id, item.quantity])
-    })
+        //orderedBook 테이블 삽입
+        sql = `INSERT INTO orderedBook (order_id, book_id, quantity) VALUES ?;`;
 
-    results = await conn.query(sql, [values]);
+        values = [];
+        orderItems.forEach((item) => {
+            values.push([orderId, item.book_id, item.quantity])
+        })
 
-    results = await deleteCartItems(items, conn);
+        results = await conn.query(sql, [values]);
 
-    return res.status(StatusCodes.OK).json(results[0]);
+        results = await deleteCartItems(items, conn);
+
+        return res.status(StatusCodes.OK).json(results[0]);
+    }
 };
 
 const deleteCartItems = async (items, conn) => {
@@ -58,40 +71,64 @@ const deleteCartItems = async (items, conn) => {
 }
 
 const getOrders = async (req, res)=>{
-    const conn = await mariadb.createConnection({
-        host : 'localhost',
-        user : 'root',
-        password : 'root',
-        database : 'BookShop',
-        dateStrings : true
-    });
+    let authorization = ensureAuthorization(req);
 
-    let sql = `select orders.id, created_at, address, receiver, contact, book_title, total_quantity, total_price 
-                from orders left join delivery on orders.delivery_id = delivery.id;`;
-    
-    let [rows, fields] = await conn.query(sql);
+    if(authorization instanceof jwt.TokenExpiredError){
+        return res.status(StatusCodes.UNAUTHORIZED).json({
+            "message" : "로그인 세션 만료! 재로그인 요망!"
+        })
+    }else if(authorization instanceof jwt.JsonWebTokenError){
+        return res.status(StatusCodes.BAD_REQUEST).json({
+            "message" : "잘못된 토큰입니다."
+        })
+    }else{
+        const conn = await mariadb.createConnection({
+            host : 'localhost',
+            user : 'root',
+            password : 'root',
+            database : 'BookShop',
+            dateStrings : true
+        });
 
-    return res.status(StatusCodes.OK).json(rows);
+        let sql = `select orders.id, created_at, address, receiver, contact, book_title, total_quantity, total_price 
+                    from orders left join delivery on orders.delivery_id = delivery.id WHERE user_id = ?;`;
+        
+        let [rows, fields] = await conn.query(sql, authorization.id);
+
+        return res.status(StatusCodes.OK).json(rows);
+    }
 };
 
 const getOrderDetail = async (req, res)=>{
-    const {id} = req.params;
-    const conn = await mariadb.createConnection({
-        host : 'localhost',
-        user : 'root',
-        password : 'root',
-        database : 'BookShop',
-        dateStrings : true
-    });
+    let authorization = ensureAuthorization(req);
 
-    let sql = `SELECT book_id, title, author, price, quantity
-                FROM orderedBook LEFT JOIN books
-                ON orderedBook.book_id = books.id
-                WHERE order_id = ?`;
+    if(authorization instanceof jwt.TokenExpiredError){
+        return res.status(StatusCodes.UNAUTHORIZED).json({
+            "message" : "로그인 세션 만료! 재로그인 요망!"
+        })
+    }else if(authorization instanceof jwt.JsonWebTokenError){
+        return res.status(StatusCodes.BAD_REQUEST).json({
+            "message" : "잘못된 토큰입니다."
+        })
+    }else{
+        const orderId = req.params.id;
+        const conn = await mariadb.createConnection({
+            host : 'localhost',
+            user : 'root',
+            password : 'root',
+            database : 'BookShop',
+            dateStrings : true
+        });
 
-    let [rows, fields] = await conn.query(sql,[id]);
+        let sql = `SELECT book_id, title, author, price, quantity
+                    FROM orderedBook LEFT JOIN books
+                    ON orderedBook.book_id = books.id
+                    WHERE order_id = ?`;
 
-    return res.status(StatusCodes.OK).json(rows);
+        let [rows, fields] = await conn.query(sql,[orderId]);
+
+        return res.status(StatusCodes.OK).json(rows);
+    }
 };
 
 
